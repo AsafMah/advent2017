@@ -1,48 +1,23 @@
-#[derive(Debug)]
-struct List {
-    arr: Vec<u32>,
-    index: usize,
-    skip: usize
-}
-
-impl List {
-    fn new() -> Self {
-        Self {
-            arr: (0..=255).collect(),
-            index: 0,
-            skip: 0
-        }
-    }
-
-    fn do_move(&mut self, len: usize) {
-        for i in 0..(len / 2) {
-            let start_index = (self.index + i) % self.arr.len();
-            let end_index = (self.index + len - i - 1) % self.arr.len();
-            self.arr.swap(start_index, end_index);
-        }
-        self.index += len + self.skip;
-        self.skip += 1;
-
-    }
-}
-
 
 fn main() {
-    let input: &'static [u8] = include_bytes!("input_day_10");
-    let input : Vec<_> = input.iter().chain(&[17u8, 31, 73, 47, 23]).collect();
+    let input: &'static str = include_str!("input_day_11");
+    let dirs : Vec<Direction> = input.split(',').map(|s| s.parse().unwrap()).collect();
+    let mut counts = Vec::new();
+    let mut grid = Grid{x: 0, y: 0};
+    for dir in dirs {
+        grid.next(dir);
 
-    let mut list = List::new();
+        let mut test_grid = grid.clone();
+        let mut counter = 0;
 
-    for &&length in input.iter().cycle().take(64 * input.len()) {
-        list.do_move(length as usize);
+        while test_grid.x != 0 || test_grid.y != 0 {
+            test_grid.smart_step();
+            counter += 1;
+        }
+
+        counts.push(counter);
     }
+    
 
-    let str : String = list.arr
-        .chunks(16)
-        .map(|chunk|
-            chunk.iter().fold(0u8, |acc, &i| acc ^ (i as u8)))
-        .map(|b| format!("{:02X}", b))
-        .collect();
-
-    eprintln!("str = {}", str);
+    eprintln!("grid = {:?}", counts.iter().max());
 }
