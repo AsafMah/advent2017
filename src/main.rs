@@ -29,3 +29,16 @@ fn main() {
 
 
 }
+
+fn knot_hash(input: &[u8]) -> Vec<u8> {
+    let input: Vec<_> = input.iter().chain(&[17u8, 31, 73, 47, 23]).collect();
+    let mut list = List::new();
+    for &&length in input.iter().cycle().take(64 * input.len()) {
+        list.do_move(length as usize);
+    }
+    list.arr
+        .chunks(16)
+        .map(|chunk|
+            chunk.iter().fold(0u8, |acc, &i| acc ^ (i as u8)))
+        .collect()
+}
