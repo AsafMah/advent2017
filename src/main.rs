@@ -1,93 +1,85 @@
-#[derive(Debug)]
-struct List {
-    arr: Vec<u32>,
-    index: usize,
-    skip: usize,
+#[macro_use]
+extern crate nom;
+
+use std::char;
+use std::str::{FromStr, from_utf8};
+use nom::{digit, types::CompleteByteSlice};
+
+named!(letter_to_num<CompleteByteSlice, usize>,
+    map!(take!(1), |b| (b[0] as usize) - ('a' as usize) )
+);
+
+named!(number<CompleteByteSlice, usize>,
+    map_res!(map_res!(map!(digit, |b| b.0), from_utf8), FromStr::from_str)
+);
+
+named!(parse_move<CompleteByteSlice, Move>,
+alt!(
+    do_parse!(
+    char!('s') >>
+    count: number >>
+    (Move::Spin(count))
+    ) |
+    do_parse!(
+    char!('x') >>
+    first: number >>
+    char!('/') >>
+    second: number >>
+    (Move::Exchange(first, second))
+    ) |
+    do_parse!(
+    char!('p') >>
+    first: letter_to_num >>
+    char!('/') >>
+    second: letter_to_num >>
+    (Move::Partner(first, second))
+    )
+    )
+);
+
+
+named!(parse_moves<CompleteByteSlice, Vec<Move>>,
+    separated_list!(char!(',') , parse_move)
+);
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
+enum Move {
+    Spin(usize),
+    Exchange(usize, usize),
+    Partner(usize, usize),
 }
 
-impl List {
-    fn new() -> Self {
-        Self {
-            arr: (0..=255).collect(),
-            index: 0,
-            skip: 0,
+fn main()  {
+    let input: &'static str = include_str!("input_day_16.txt");
+    let mut state: Vec<_> = (0..16).collect();
+    let mut states = vec![state.clone()];
+    eprintln!("state = {:?}", state);
+    let data2 = parse_moves(CompleteByteSlice(input.as_bytes()));
+    let data2 = data2.unwrap().1;
+
+    for _ in 0..1_000_000_000 {
+        for dance_move in &data2 {
+            match dance_move {
+                Move::Spin(count) => state.rotate_right(*count),
+                Move::Exchange(i1, i2) => state.swap(*i1, *i2),
+                Move::Partner(p1, p2) => {
+                    let pos1 = state.iter().position(|c| c == p1).unwrap();
+                    let pos2 = state.iter().position(|c| c == p2).unwrap();
+                    state.swap(pos1, pos2)
+                }
+            };
         }
-    }
 
-    fn do_move(&mut self, len: usize) {
-        for i in 0..(len / 2) {
-            let start_index = (self.index + i) % self.arr.len();
-            let end_index = (self.index + len - i - 1) % self.arr.len();
-            self.arr.swap(start_index, end_index);
+        if states[0] == state {
+            break;
         }
-        self.index += len + self.skip;
-        self.skip += 1;
-    }
-}
 
-fn u8_to_bit_array(n: u8) -> [bool; 8] {
-    let mut res = [false; 8];
-    let mut current = n;
-    for i in (0..res.len()).rev() {
-        res[i] = (current & 1) == 1;
-        current >>= 1;
-    }
-    res
-}
+        states.push(state.clone());
 
-fn walk(vec: &mut Vec<Vec<bool>>, index: (usize, usize)) {
-    if vec[index.0][index.1] == false {
-        return;
-    }
-    vec[index.0][index.1] = false;
-    if index.0 + 1 != vec.len() {
-        let new_index = (index.0 + 1, index.1);
-        walk(vec, new_index);
-    }
-    if index.0  != 0 {
-        walk(vec, (index.0 - 1, index.1));
-    }
-    if index.1 + 1 != vec.len() {
-        walk(vec, (index.0, index.1 + 1));
-    }
-    if index.1  != 0 {
-        walk(vec, (index.0, index.1 - 1));
-    }
-}
-
-fn main() {
-    let input: &'static str = "amgozmfv";
-    let mut vec = (0..128).map(|i| {
-        let line = format!("{}-{}", input, i);
-        knot_hash(line.as_bytes())
-    })
-        .map(|vec| vec.iter().flat_map(|&b| u8_to_bit_array(b).to_vec()).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-
-    let mut counter = 0;
-
-    for i in 0..vec.len() {
-        for j in 0..vec[i].len() {
-            if vec[i][j] {
-                counter += 1;
-                walk(&mut vec, (i, j));
-            }
-        }
     }
 
+    let states_strings = states.iter().map(|s| s.iter().map(|c| char::from_u32((c + 97) as u32).unwrap()).collect::<String>()).collect::<Vec<_>>();
 
-    eprintln!("counter = {:?}", counter);
-}
-
-fn knot_hash(input: &[u8]) -> Vec<u8> {
-    let input: Vec<_> = input.iter().chain(&[17u8, 31, 73, 47, 23]).collect();
-    let mut list = List::new();
-    for &&length in input.iter().cycle().take(64 * input.len()) {
-        list.do_move(length as usize);
-    }
-    list.arr
-        .chunks(16)
-        .map(|chunk|
-            chunk.iter().fold(0u8, |acc, &i| acc ^ (i as u8)))
-        .collect()
+    eprintln!("data = {:?}", states_strings);
+    eprintln!("1_000_000_000 % states.len() = {:?}", states_strings[1_000_000_000 % states.len()]);
 }
