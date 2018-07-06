@@ -2,10 +2,13 @@ extern crate failure;
 extern crate itertools;
 #[macro_use]
 extern crate nom;
+extern crate multimap;
 
 use failure::Error;
 use nom::types::CompleteStr;
 use nom::line_ending;
+use multimap::MultiMap;
+use std::collections::HashMap;
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug, Default, Hash)]
 struct Vec3 {
@@ -82,16 +85,32 @@ named!(particles<CompleteStr, Vec<Particle>>,
     separated_list!(line_ending , particle)
 );
 
+
 fn main() -> Result<(), Error> {
     let input : &'static str = include_str!("input_day_20");
-    let mut particles : Vec<Particle> = particles(CompleteStr(input)).unwrap().1;
+    let particles : Vec<Particle> = particles(CompleteStr(input)).unwrap().1;
+    let mut particles : HashMap<usize, Particle> = particles.into_iter().enumerate().collect();
 
     for _ in 0..10000 {
-        for particle in particles.iter_mut() {
-            particle.do_step()
+        let mut multimap = MultiMap::new();
+
+        for (i, particle) in particles.iter_mut() {
+            particle.do_step();
+            multimap.insert(particle.pos, *i);
         }
+
+        for (_, values) in multimap.iter_all() {
+            if values.len() == 1 {
+                continue;
+            }
+
+            for value in values {
+                particles.remove(value);
+            }
+        }
+
     }
 
-    eprintln!("particles.iter().max_by() = {:?}", particles.iter().enumerate().min_by_key(|&(_, item)| item.distance()));
+    eprintln!("particles.len() = {:?}", particles.len());
     Ok(())
 }
