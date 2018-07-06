@@ -1,164 +1,81 @@
-#[macro_use]
-extern crate nom;
+extern crate failure;
+extern crate itertools;
 
-use std::error::Error;
-use nom::{alpha, space, line_ending};
-use nom::types::CompleteStr;
-use std::sync::mpsc::{channel, Sender, Receiver};
+use failure::Error;
+use std::iter::{once, repeat};
+use itertools::Itertools;
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
-struct Register(usize);
-
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
-enum Value {
-    Register(Register),
-    Number(i64),
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+enum Direction {
+    Up,
+    Right,
+    Down,
+    Left,
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
-enum Instruction {
-    Snd(Value),
-    Set(Register, Value),
-    Add(Register, Value),
-    Mul(Register, Value),
-    Mod(Register, Value),
-    Rcv(Register),
-    Jgz(Value, Value),
-}
-
-fn is_number(chr: char) -> bool {
-    chr >= '0' && chr <= '9' || chr == '-'
-}
-
-named!(register<CompleteStr, Register>,
-    map!(take!(1), |b| Register((b.as_bytes()[0] as usize) - ('a' as usize)) )
-);
-
-named!(number<CompleteStr, i64>,
-    flat_map!(take_while!(is_number), parse_to!(i64))
-);
-
-named!(value<CompleteStr, Value>,
-alt!(
-    number => {|n| Value::Number(n)} |
-    register => {|r| Value::Register(r) }
-)
-);
-
-named!(instruction<CompleteStr, Instruction>,
-    switch!(ws!(alpha),
-        CompleteStr("snd") => map!(value, |n| Instruction::Snd(n)) |
-        CompleteStr("set") => map!(separated_pair!(register, space, value), |(v1, v2)| Instruction::Set(v1, v2)) |
-        CompleteStr("add") => map!(separated_pair!(register, space, value), |(v1, v2)| Instruction::Add(v1, v2)) |
-        CompleteStr("mul") => map!(separated_pair!(register, space, value), |(v1, v2)| Instruction::Mul(v1, v2)) |
-        CompleteStr("mod") => map!(separated_pair!(register, space, value), |(v1, v2)| Instruction::Mod(v1, v2)) |
-        CompleteStr("rcv") => map!(register, |n| Instruction::Rcv(n)) |
-        CompleteStr("jgz") => map!(separated_pair!(value, space, value), |(v1, v2)| Instruction::Jgz(v1, v2))
-    )
-);
-
-named!(instructions<CompleteStr, Vec<Instruction>>,
-    separated_list!(line_ending , instruction)
-);
-
-enum Stuck {
-    Stuck,
-    Unstuck
-}
-
-const ID_REGISTER : usize = (b'p' - b'a') as usize;
-
-#[derive(Debug)]
-struct State {
-    registers: Vec<i64>,
-    ip: usize,
-    instructions: Vec<Instruction>,
-    tx: Sender<i64>,
-    rx: Receiver<i64>,
-    send_counter: i64
-}
-
-impl State {
-    fn new(instructions: Vec<Instruction>, id: i64, tx: Sender<i64>, rx: Receiver<i64>) -> State {
-        let mut s = State {
-            send_counter: 0,
-            ip: 0,
-            registers: (0..256).map(|_| 0).collect(),
-            instructions,
-            tx,
-            rx
-        };
-        s.registers[ID_REGISTER] = id;
-        s
-    }
-
-    fn get_value(&self, v: Value) -> i64 {
-        match v {
-            Value::Register(Register(r)) => self.registers[r],
-            Value::Number(i) => i,
-        }
-    }
-
-    fn do_instruction(&mut self) -> Option<Stuck> {
-        if let Some(&ins) = self.instructions.get(self.ip) {
-            self.ip += 1;
-            match ins {
-                Instruction::Snd(v) => {
-                    self.send_counter += 1;
-                    self.tx.send(self.get_value(v)).unwrap()
-                }
-                Instruction::Set(Register(r), v) => { self.registers[r] = self.get_value(v) }
-                Instruction::Add(Register(r), v) => { self.registers[r] += self.get_value(v) }
-                Instruction::Mul(Register(r), v) => { self.registers[r] *= self.get_value(v) }
-                Instruction::Mod(Register(r), v) => { self.registers[r] %= self.get_value(v) }
-                Instruction::Rcv(Register(r)) => {
-                    if let Ok(v) = self.rx.try_recv() {
-                        self.registers[r] = v;
-                    } else{
-                        self.ip -= 1; //repeat this instruction
-                        return Some(Stuck::Stuck);
-                    }
-                    }
-                Instruction::Jgz(v, o) => {
-                    if self.get_value(v) > 0 {
-                        self.ip -= 1; //reset to before increment
-                        self.ip = ((self.ip as i64) + self.get_value(o)) as usize;
-                    }
-                }
-            }
-            Some(Stuck::Unstuck)
-        } else {
-            None
+impl Direction {
+    fn opposite(&self) -> Direction {
+        match *self {
+            Direction::Up => Direction::Down,
+            Direction::Right => Direction::Left,
+            Direction::Down => Direction::Up,
+            Direction::Left => Direction::Right,
         }
     }
 }
 
-impl Iterator for State {
-    type Item = Stuck;
 
-    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
-        self.do_instruction()
+fn advance(grid: &Vec<Vec<char>>, x: usize, y: usize, direction: Direction) -> (usize, usize) {
+    match direction {
+        Direction::Up => (x, y - 1),
+        Direction::Right => (x + 1, y),
+        Direction::Down => (x, y + 1),
+        Direction::Left => (x - 1, y),
     }
 }
 
-fn main() -> Result<(), Box<Error>> {
-    let input: &'static str = include_str!("input_day_18");
-    let input = CompleteStr(input);
-    let ins = instructions(input).unwrap().1;
+fn idx(grid: &Vec<Vec<char>>, (x, y): (usize, usize)) -> char {
+    return grid.get(y).and_then(|g| g.get(x)).map(|x| *x).unwrap_or(' ');
+}
 
-    let  (s1_tx, s2_rx) = channel();
-    let  (s2_tx, s1_rx) = channel();
-    let mut state1 = State::new(ins.clone(), 0, s1_tx, s1_rx);
-    let mut state2 = State::new(ins.clone(), 1, s2_tx, s2_rx);
+fn main() -> Result<(), Error> {
+    let input: &'static str = include_str!("input_day_19");
+    let directions = [Direction::Up, Direction::Right, Direction::Down, Direction::Left];
+    let mut direction = Direction::Down;
+    let mut grid = input
+        .lines()
+        .map(|l| l.chars().collect_vec())
+        .collect_vec();
+
+    let max_line_length = grid.iter().map(|v| v.len()).max().unwrap();
+    grid.push(repeat(' ').take(max_line_length).collect_vec());
+
+    let mut x = grid[0].iter().position(|&f| f == '|').unwrap();
+    let mut y = 0;
+    eprintln!("grid = {:#?}", grid);
 
     loop {
-        match (state1.next(), state2.next()) {
-            (None, None) => break,
-            (Some(Stuck::Stuck), Some(Stuck::Stuck)) => break,
+        let a = advance(&grid, x, y, direction);
+        x = a.0;
+        y = a.1;
+
+        match idx(&grid, (x,y)) {
+            '+' => {
+                let mut dir = directions.iter().filter(|&&x| x != direction.opposite()).find(|&&d| {
+                    let res = idx(&grid, advance(&grid, x, y, d));
+                    return res != ' ';
+                });
+
+                match dir {
+                    Some(&d) => direction = d,
+                    None => break
+                }
+            },
+            ' ' => return Ok(()),
+            l @ 'A'...'Z' => eprintln!("letter {:?}", (x,y,l)),
             _ => {}
         }
     }
 
-    eprintln!("state1.send_counter, state2.send_counter = {:?}", (state1.send_counter, state2.send_counter));
     Ok(())
 }
