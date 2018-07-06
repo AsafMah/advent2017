@@ -52,12 +52,14 @@ fn main() -> Result<(), Error> {
 
     let mut x = grid[0].iter().position(|&f| f == '|').unwrap();
     let mut y = 0;
+    let mut counter = 0;
     eprintln!("grid = {:#?}", grid);
 
     loop {
         let a = advance(&grid, x, y, direction);
         x = a.0;
         y = a.1;
+        counter += 1;
 
         match idx(&grid, (x,y)) {
             '+' => {
@@ -71,7 +73,10 @@ fn main() -> Result<(), Error> {
                     None => break
                 }
             },
-            ' ' => return Ok(()),
+            ' ' => {
+                eprintln!("counter = {:?}", counter);
+                return Ok(())
+            },
             l @ 'A'...'Z' => eprintln!("letter {:?}", (x,y,l)),
             _ => {}
         }
