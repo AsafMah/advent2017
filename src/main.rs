@@ -1,86 +1,97 @@
 extern crate failure;
 extern crate itertools;
+#[macro_use]
+extern crate nom;
 
 use failure::Error;
-use std::iter::{once, repeat};
-use itertools::Itertools;
+use nom::types::CompleteStr;
+use nom::line_ending;
 
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-enum Direction {
-    Up,
-    Right,
-    Down,
-    Left,
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug, Default, Hash)]
+struct Vec3 {
+    x: i64,
+    y: i64,
+    z: i64,
 }
 
-impl Direction {
-    fn opposite(&self) -> Direction {
-        match *self {
-            Direction::Up => Direction::Down,
-            Direction::Right => Direction::Left,
-            Direction::Down => Direction::Up,
-            Direction::Left => Direction::Right,
-        }
+impl Vec3 {
+    fn texicab_distance(&self) -> i64 {
+        self.x.abs() + self.y.abs() + self.z.abs()
     }
 }
 
 
-fn advance(grid: &Vec<Vec<char>>, x: usize, y: usize, direction: Direction) -> (usize, usize) {
-    match direction {
-        Direction::Up => (x, y - 1),
-        Direction::Right => (x + 1, y),
-        Direction::Down => (x, y + 1),
-        Direction::Left => (x - 1, y),
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug, Default, Hash)]
+struct Particle {
+    pos: Vec3,
+    vel: Vec3,
+    acc: Vec3
+}
+
+impl Particle {
+    fn distance(&self) -> i64 {
+        self.pos.texicab_distance()
+    }
+
+    fn do_step(&mut self) {
+        self.vel.x += self.acc.x;
+        self.vel.y += self.acc.y;
+        self.vel.z += self.acc.z;
+        self.pos.x += self.vel.x;
+        self.pos.y += self.vel.y;
+        self.pos.z += self.vel.z;
     }
 }
 
-fn idx(grid: &Vec<Vec<char>>, (x, y): (usize, usize)) -> char {
-    return grid.get(y).and_then(|g| g.get(x)).map(|x| *x).unwrap_or(' ');
+
+fn is_number(chr: char) -> bool {
+    chr >= '0' && chr <= '9' || chr == '-'
 }
+
+named!(number<CompleteStr, i64>,
+    flat_map!(take_while!(is_number), parse_to!(i64))
+);
+
+named!(vec3<CompleteStr, Vec3>,
+    do_parse!(
+        tag!("<") >>
+        x: number >>
+        tag!(",") >>
+        y: number >>
+        tag!(",") >>
+        z: number >>
+        tag!(">") >>
+        (Vec3 { x, y, z})
+    )
+);
+
+
+named!(particle<CompleteStr, Particle>,
+    do_parse!(
+        tag!("p=") >>
+        pos: vec3 >>
+        tag!(", v=") >>
+        vel: vec3 >>
+        tag!(", a=") >>
+        acc: vec3 >>
+        (Particle { pos, vel, acc})
+    )
+);
+
+named!(particles<CompleteStr, Vec<Particle>>,
+    separated_list!(line_ending , particle)
+);
 
 fn main() -> Result<(), Error> {
-    let input: &'static str = include_str!("input_day_19");
-    let directions = [Direction::Up, Direction::Right, Direction::Down, Direction::Left];
-    let mut direction = Direction::Down;
-    let mut grid = input
-        .lines()
-        .map(|l| l.chars().collect_vec())
-        .collect_vec();
+    let input : &'static str = include_str!("input_day_20");
+    let mut particles : Vec<Particle> = particles(CompleteStr(input)).unwrap().1;
 
-    let max_line_length = grid.iter().map(|v| v.len()).max().unwrap();
-    grid.push(repeat(' ').take(max_line_length).collect_vec());
-
-    let mut x = grid[0].iter().position(|&f| f == '|').unwrap();
-    let mut y = 0;
-    let mut counter = 0;
-    eprintln!("grid = {:#?}", grid);
-
-    loop {
-        let a = advance(&grid, x, y, direction);
-        x = a.0;
-        y = a.1;
-        counter += 1;
-
-        match idx(&grid, (x,y)) {
-            '+' => {
-                let mut dir = directions.iter().filter(|&&x| x != direction.opposite()).find(|&&d| {
-                    let res = idx(&grid, advance(&grid, x, y, d));
-                    return res != ' ';
-                });
-
-                match dir {
-                    Some(&d) => direction = d,
-                    None => break
-                }
-            },
-            ' ' => {
-                eprintln!("counter = {:?}", counter);
-                return Ok(())
-            },
-            l @ 'A'...'Z' => eprintln!("letter {:?}", (x,y,l)),
-            _ => {}
+    for _ in 0..10000 {
+        for particle in particles.iter_mut() {
+            particle.do_step()
         }
     }
 
+    eprintln!("particles.iter().max_by() = {:?}", particles.iter().enumerate().min_by_key(|&(_, item)| item.distance()));
     Ok(())
 }
