@@ -3,52 +3,55 @@ extern crate itertools;
 extern crate ndarray;
 
 use failure::Error;
-use std::collections::HashMap;
 use ndarray::Array2;
+use ndarray::prelude::arr2;
+use std::collections::HashMap;
+use itertools::Itertools;
+use ndarray::Axis;
+use ndarray::stack;
 
 type Slot = u8;
-type GridHash = Vec<Slot>;
+type PatternMap = HashMap<Array2<Slot>, Grid>;
 
-#[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Debug, Hash)]
-struct Grid(Vec<Vec<Slot>>);
+
+fn find_in_map_reverse_transpose<'a>(map: &'a PatternMap, arr: &Array2<Slot>) -> Result<&'a Grid, Array2<Slot>> {
+    let mut arr = arr.clone().reversed_axes();
+
+    map.get(&arr).or_else(|| {
+        arr.invert_axis(Axis(1));
+        map.get(&arr)
+    }).ok_or_else(|| arr)
+}
+
+fn find_in_map<'a>(map: &'a PatternMap, arr: &Array2<Slot>) -> &'a Grid {
+    find_in_map_reverse_transpose(&map, arr)
+        .or_else(|arr| find_in_map_reverse_transpose(&map, &arr))
+        .or_else(|arr| find_in_map_reverse_transpose(&map, &arr))
+        .or_else(|arr| find_in_map_reverse_transpose(&map, &arr))
+        .unwrap()
+}
+
+
+#[derive(Clone, Debug, Hash)]
+struct Grid(Array2<Slot>);
 
 impl Grid {
-    fn hash(&self) -> GridHash {
-        let mut sum_vec = Vec::new();
+    fn enrich(&self, map: &PatternMap) -> Grid {
+        let len = if self.0.len_of(Axis(0)) % 2 == 0 { 2 } else { 3 };
+        let v = self.0
+            .exact_chunks((len, len))
+            .into_iter()
+            .map(|c| find_in_map(map, &c.to_owned()).0.view())
+            .collect_vec();
 
-        for v in self.0.iter() {
-            sum_vec.push(v.iter().sum());
-        }
+        let new_arrays = v.chunks(self.0.len_of(Axis(0)) / len)
+            .map(|c| stack(Axis(1), c).unwrap())
+            .collect_vec();
 
-        let mut sum_top_left_to_bottom_right = 0;
-        let mut sum_top_right_to_bottom_left = 0;
+        let views = new_arrays.iter().map(|v| v.view()).collect_vec();
 
-        for i in 0..self.0.len() {
-            let mut sum = 0;
-            for j in 0..self.0[i].len() {
-                sum += self.0[j][i];
-            }
-            sum_top_left_to_bottom_right += self.0[i][i];
-            sum_top_right_to_bottom_left += self.0[self.0.len() - 1 - i][self.0.len() - 1 - i];
-            sum_vec.push(sum);
-        }
-        sum_vec.push(sum_top_left_to_bottom_right);
-        sum_vec.push(sum_top_right_to_bottom_left);
 
-        sum_vec.sort();
-        sum_vec
-    }
-
-    fn enrich(&mut self, pattern_map: &HashMap<GridHash, Grid>) {
-        let chunk_size = if self.0.len() % 2 == 0 { 2 } else { 3 };
-
-        for i in (0..self.0.len()).step_by(chunk_size) {
-            for j in (0..self.0[i].len()).step_by(chunk_size) {
-                let grid = Grid(self.0[i..(i+chunk_size)].iter().map(|v| v[j..(j+chunk_size)].into()).collect());
-                let new_grid = &pattern_map[&grid.hash()];
-                eprintln!("new_grid = {:?}", new_grid);
-            }
-        }
+        Grid(stack(Axis(0), &views).unwrap())
     }
 }
 
@@ -66,25 +69,31 @@ fn map_to_byte(c: char) -> Slot {
 fn main() -> Result<(), Error> {
     let input: &'static str = include_str!("input_day_21");
 
-    let mut initial_grid = Grid(
-    vec![
-        vec![0, 1, 0],
-        vec![0, 0, 1],
-        vec![1, 1, 1],
-    ]);
+    let initial_grid = Grid(
+        arr2(&[
+            [0, 1, 0],
+            [0, 0, 1],
+            [1, 1, 1],
+        ]));
 
 
-    let mut pattern_map: HashMap<_, _> =
+    let pattern_map: PatternMap =
         input.lines().map(|l| {
             let mut parts = l.split(" => ");
-            let key = Grid(parts.next().unwrap().split("/").map(|l| l.chars().map(map_to_byte).collect()).collect());
-            let val = Grid(parts.next().unwrap().split("/").map(|l| l.chars().map(map_to_byte).collect()).collect());
+            let key: Vec<_> = parts.next().unwrap().split("/").flat_map(|l| l.chars().map(map_to_byte)).collect();
+            let len = if key.len() == 4 { 2 } else { 3 };
+            let key = Array2::from_shape_vec((len, len), key).unwrap();
 
-            (key.hash(), val)
+            let val = parts.next().unwrap().split("/").flat_map(|l| l.chars().map(map_to_byte)).collect();
+            let val = Grid(Array2::from_shape_vec((len + 1, len + 1), val).unwrap());
+            (key, val)
         }).collect();
 
-    initial_grid.enrich(&pattern_map);
+    let mut grid = initial_grid;
+    for _ in 0..18 {
+         grid = grid.enrich(&pattern_map);
+        eprintln!("count = {:?}", grid.0.iter().fold(0u64, |acc, &i| acc + (i as u64)));
+    }
 
-    eprintln!("g = {:?}", pattern_map);
     Ok(())
 }
