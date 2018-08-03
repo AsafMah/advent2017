@@ -31,6 +31,15 @@ impl Direction {
             Direction::Right => Direction::Up,
         }
     }
+
+    fn flip(self) -> Direction {
+        match self {
+            Direction::Up => Direction::Down,
+            Direction::Left => Direction::Right,
+            Direction::Down => Direction::Up,
+            Direction::Right => Direction::Left,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -40,25 +49,27 @@ struct Cursor {
     direction: Direction
 }
 
-fn advance(grid: &[Vec<u8>], cursor: &mut Cursor) {
-    match cursor.direction {
-        Direction::Up => cursor.x -= 1,
-        Direction::Right => cursor.y += 1,
-        Direction::Down => cursor.x += 1,
-        Direction::Left => cursor.y -= 1,
+impl Cursor {
+    fn turn_from_state(&mut self, state: NodeState) {
+        self.direction = match state {
+            NodeState::Clean => self.direction.left(),
+            NodeState::Weakened => self.direction,
+            NodeState::Infected => self.direction.right(),
+            NodeState::Flagged => self.direction.flip(),
+        }
     }
-}
 
-fn map_to_byte(c: char) -> u8 {
-    match c {
-        '#' => 1,
-        '.' => 0,
-        _ => {
-            eprintln!("c = {:?}", c);
-            unreachable!()
+    fn advance(&mut self) {
+        match self.direction {
+            Direction::Up => self.x -= 1,
+            Direction::Right => self.y += 1,
+            Direction::Down => self.x += 1,
+            Direction::Left => self.y -= 1,
         }
     }
 }
+
+
 
 fn print_grid(grid: &[Vec<u8>], cursor: &Cursor) {
     print!("    ");
@@ -84,10 +95,41 @@ fn print_grid(grid: &[Vec<u8>], cursor: &Cursor) {
 
 }
 
+
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+enum NodeState {
+    Clean,
+    Weakened,
+    Infected,
+    Flagged
+}
+
+impl NodeState {
+    fn from_char(c : char) -> Self {
+        match c {
+            '#' => NodeState::Infected,
+            '.' => NodeState::Clean,
+            _ => {
+                eprintln!("c = {:?}", c);
+                unreachable!()
+            }
+        }
+    }
+
+    fn next_state(self) -> Self{
+        match self {
+            NodeState::Clean => NodeState::Weakened,
+            NodeState::Weakened => NodeState::Infected,
+            NodeState::Infected => NodeState::Flagged,
+            NodeState::Flagged => NodeState::Clean,
+        }
+    }
+}
+
 fn main() -> Result<(), Error> {
     let input: &'static str = include_str!("input_day_22");
-    let vec = input.lines().map(|l| l.chars().map(map_to_byte).collect_vec() ).collect_vec();
-    let mut grid = vec![vec!(0u8;10000);10000];
+    let vec = input.lines().map(|l| l.chars().map(NodeState::from_char).collect_vec() ).collect_vec();
+    let mut grid = vec![vec!(NodeState::Clean;10000);10000];
     let grid_offset = grid.len() / 2;
     for i in 0..vec.len(){
         for j in 0..vec[0].len() {
@@ -103,23 +145,16 @@ fn main() -> Result<(), Error> {
 
     let mut infected_counter = 0;
 
-    for _ in 0..10000 {
-        match grid[virus.x][virus.y] {
-            1 => {
-                grid[virus.x][virus.y] = 0;
-                virus.direction = virus.direction.right();
-            }
-            0 => {
-                grid[virus.x][virus.y] = 1;
-                infected_counter += 1;
-                virus.direction = virus.direction.left();
-                eprintln!("virus = {:?}", virus);
-            }
-            _ => unreachable!()
+    for _ in 0..10000000 {
+        let current = grid[virus.x][virus.y];
+
+        virus.turn_from_state(current);
+        grid[virus.x][virus.y] = current.next_state();
+        if current.next_state() == NodeState::Infected {
+            infected_counter += 1;
         }
 
-        advance(&grid, &mut virus);
-        eprintln!("virus = {:?}", virus);
+        virus.advance();
     }
     eprintln!("infected_counter = {:?}", infected_counter);
     Ok(())
