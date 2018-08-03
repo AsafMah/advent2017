@@ -21,13 +21,14 @@ impl Outlet {
     }
 }
 
-fn strongest_bridge(current: u32, v: &Vec<Outlet>) -> u32{
-    v.iter().enumerate().filter_map(|(i, o)| o.connects(current).map(|s| (i, s.0, s.1)))
+fn strongest_bridge(current_sum: u32, v: &Vec<Outlet>) -> (u32, u32){
+    v.iter().enumerate().filter_map(|(i, o)| o.connects(current_sum).map(|s| (i, s.0, s.1)))
     .map(|(i, new_current, next)| {
         let mut clone = v.clone();
         clone.remove(i);
-        current + new_current + strongest_bridge(next, &clone)
-    }).max().unwrap_or(current)
+        let  (length, sum) = strongest_bridge(next, &clone);
+        (length + 1, current_sum + new_current + sum)
+    }).max().unwrap_or((1, current_sum))
 }
 
 fn main() -> Result<(), Box<Error>> {
