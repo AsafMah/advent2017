@@ -1,161 +1,137 @@
-extern crate failure;
-extern crate itertools;
-extern crate ndarray;
+#[macro_use]
+extern crate nom;
 
-use itertools::Itertools;
-use failure::Error;
+use std::error::Error;
+use nom::{alpha, space, line_ending};
+use nom::types::CompleteStr;
 
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-enum Direction {
-    Up,
-    Right,
-    Down,
-    Left,
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+struct Register(usize);
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+enum Value {
+    Register(Register),
+    Number(i64),
 }
 
-impl Direction {
-    fn right(self) -> Direction {
-        match self {
-            Direction::Up => Direction::Right,
-            Direction::Right => Direction::Down,
-            Direction::Down => Direction::Left,
-            Direction::Left => Direction::Up,
-        }
-    }
-
-    fn left(self) -> Direction {
-        match self {
-            Direction::Up => Direction::Left,
-            Direction::Left => Direction::Down,
-            Direction::Down => Direction::Right,
-            Direction::Right => Direction::Up,
-        }
-    }
-
-    fn flip(self) -> Direction {
-        match self {
-            Direction::Up => Direction::Down,
-            Direction::Left => Direction::Right,
-            Direction::Down => Direction::Up,
-            Direction::Right => Direction::Left,
-        }
-    }
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+enum Instruction {
+    Set(Register, Value),
+    Add(Register, Value),
+    Sub(Register, Value),
+    Mul(Register, Value),
+    Mod(Register, Value),
+    Jnz(Value, Value),
 }
+
+fn is_number(chr: char) -> bool {
+    chr >= '0' && chr <= '9' || chr == '-'
+}
+
+named!(register<CompleteStr, Register>,
+    map!(take!(1), |b| Register((b.as_bytes()[0] as usize) - ('a' as usize)) )
+);
+
+named!(number<CompleteStr, i64>,
+    flat_map!(take_while!(is_number), parse_to!(i64))
+);
+
+named!(value<CompleteStr, Value>,
+alt!(
+    number => {|n| Value::Number(n)} |
+    register => {|r| Value::Register(r) }
+)
+);
+
+named!(instruction<CompleteStr, Instruction>,
+    switch!(ws!(alpha),
+        CompleteStr("set") => map!(separated_pair!(register, space, value), |(v1, v2)| Instruction::Set(v1, v2)) |
+        CompleteStr("add") => map!(separated_pair!(register, space, value), |(v1, v2)| Instruction::Add(v1, v2)) |
+        CompleteStr("sub") => map!(separated_pair!(register, space, value), |(v1, v2)| Instruction::Sub(v1, v2)) |
+        CompleteStr("mul") => map!(separated_pair!(register, space, value), |(v1, v2)| Instruction::Mul(v1, v2)) |
+        CompleteStr("mod") => map!(separated_pair!(register, space, value), |(v1, v2)| Instruction::Mod(v1, v2)) |
+        CompleteStr("jnz") => map!(separated_pair!(value, space, value), |(v1, v2)| Instruction::Jnz(v1, v2))
+    )
+);
+
+named!(instructions<CompleteStr, Vec<Instruction>>,
+    separated_list!(line_ending , instruction)
+);
+
 
 #[derive(Debug)]
-struct Cursor {
-    x: usize,
-    y: usize,
-    direction: Direction
+struct State {
+    registers: Vec<i64>,
+    ip: usize,
+    instructions: Vec<Instruction>,
+    memory: i64,
 }
 
-impl Cursor {
-    fn turn_from_state(&mut self, state: NodeState) {
-        self.direction = match state {
-            NodeState::Clean => self.direction.left(),
-            NodeState::Weakened => self.direction,
-            NodeState::Infected => self.direction.right(),
-            NodeState::Flagged => self.direction.flip(),
+impl State {
+    fn new(instructions: Vec<Instruction>) -> State {
+        State {
+            memory: 0,
+            ip: 0,
+            registers: (0..256).map(|_| 0).collect(),
+            instructions,
         }
     }
 
-    fn advance(&mut self) {
-        match self.direction {
-            Direction::Up => self.x -= 1,
-            Direction::Right => self.y += 1,
-            Direction::Down => self.x += 1,
-            Direction::Left => self.y -= 1,
+    fn get_value(&self, v: Value) -> i64 {
+        match v {
+            Value::Register(Register(r)) => self.registers[r],
+            Value::Number(i) => i,
         }
     }
-}
 
-
-
-fn print_grid(grid: &[Vec<u8>], cursor: &Cursor) {
-    print!("    ");
-    for i in 0..grid.len() {
-        print!("{:2} ", i);
-    }
-
-    println!();
-
-    for i in 0..grid.len() {
-        print!("{:02}  ", i);
-        for j in 0..grid.len() {
-            if cursor.x == i && cursor.y == j {
-                print!("[{}]", grid[i][j]);
-            } else {
-                print!(" {} ", grid[i][j]);
+    fn do_instruction(&mut self) -> Option<bool> {
+        let mut did_mul = false;
+        if let Some(&ins) = self.instructions.get(self.ip) {
+            self.ip += 1;
+            match ins {
+                Instruction::Set(Register(r), v) => { self.registers[r] = self.get_value(v) }
+                Instruction::Add(Register(r), v) => { self.registers[r] += self.get_value(v) }
+                Instruction::Sub(Register(r), v) => { self.registers[r] -= self.get_value(v) }
+                Instruction::Mul(Register(r), v) => { did_mul = true;self.registers[r] *= self.get_value(v) }
+                Instruction::Mod(Register(r), v) => { self.registers[r] %= self.get_value(v) }
+                Instruction::Jnz(v, o) => {
+                    if self.get_value(v) != 0 {
+                        self.ip -= 1; //reset to before increment
+                        self.ip = ((self.ip as i64) + self.get_value(o)) as usize;
+                    }
+                }
             }
-        }
-        println!();
-    }
-
-    println!();
-
-}
-
-
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-enum NodeState {
-    Clean,
-    Weakened,
-    Infected,
-    Flagged
-}
-
-impl NodeState {
-    fn from_char(c : char) -> Self {
-        match c {
-            '#' => NodeState::Infected,
-            '.' => NodeState::Clean,
-            _ => {
-                eprintln!("c = {:?}", c);
-                unreachable!()
-            }
-        }
-    }
-
-    fn next_state(self) -> Self{
-        match self {
-            NodeState::Clean => NodeState::Weakened,
-            NodeState::Weakened => NodeState::Infected,
-            NodeState::Infected => NodeState::Flagged,
-            NodeState::Flagged => NodeState::Clean,
+            Some(did_mul)
+        } else {
+            None
         }
     }
 }
 
-fn main() -> Result<(), Error> {
-    let input: &'static str = include_str!("input_day_22");
-    let vec = input.lines().map(|l| l.chars().map(NodeState::from_char).collect_vec() ).collect_vec();
-    let mut grid = vec![vec!(NodeState::Clean;10000);10000];
-    let grid_offset = grid.len() / 2;
-    for i in 0..vec.len(){
-        for j in 0..vec[0].len() {
-            grid[grid_offset + i][j + grid_offset] = vec[i][j];
-        }
+impl Iterator for State {
+    type Item = bool;
+
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        self.do_instruction()
     }
+}
 
-    let mut virus = Cursor {
-        x: grid_offset + vec[0].len() / 2,
-        y: grid_offset + vec.len() / 2,
-        direction: Direction::Up
-    };
+fn main() -> Result<(), Box<Error>> {
+    let input: &'static str = include_str!("input_day_23");
+    let input = CompleteStr(input);
+    let ins = instructions(input);
+    let state = State::new(ins.unwrap().1);
+    eprintln!("state = {:?}", state);
+    let mut mul_counter = 0;
 
-    let mut infected_counter = 0;
-
-    for _ in 0..10000000 {
-        let current = grid[virus.x][virus.y];
-
-        virus.turn_from_state(current);
-        grid[virus.x][virus.y] = current.next_state();
-        if current.next_state() == NodeState::Infected {
-            infected_counter += 1;
+    for did_mul in state {
+        if did_mul {
+            mul_counter += 1;
         }
 
-        virus.advance();
     }
-    eprintln!("infected_counter = {:?}", infected_counter);
+
+    eprintln!("mul_counter = {:?}", mul_counter);
+
     Ok(())
 }
