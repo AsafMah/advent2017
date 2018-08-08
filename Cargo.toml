@@ -6,4 +6,4 @@ authors = ["asaf <mahlev.asaf@gmail.com>"]
 [dependencies]
 failure = "*"
 itertools ="*"
-nom = "*"
+regex = "*"
